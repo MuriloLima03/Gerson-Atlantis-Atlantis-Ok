@@ -1,0 +1,702 @@
+// Simple SPA for Atlantis using MongoDB API
+// No JSX/TypeScript - plain JavaScript with template literals
+
+const api = window.api;
+
+if (!api) {
+  console.error('API adapter not found! Make sure api.js is loaded before app.js');
+}
+
+// --- Storage helpers
+async function load(collection) {
+  try {
+    switch(collection) {
+      case 'atlantis_clients_v1':
+        return await api.clients.list();
+      case 'atlantis_accommodations_v1':
+        return await api.accommodations.list(); 
+      case 'atlantis_bookings_v1':
+        return await api.bookings.list();
+      default:
+        console.warn('Unknown collection:', collection);
+        return [];
+    }
+  } catch(e) {
+    console.error('Failed to load data:', e);
+    return [];
+  }
+}
+
+async function save(collection, data) {
+  try {
+    switch(collection) {
+      case 'atlantis_clients_v1':
+        return await api.clients.save(data);
+      case 'atlantis_accommodations_v1': 
+        return await api.accommodations.save(data);
+      case 'atlantis_bookings_v1':
+        return await api.bookings.save(data);
+      default:
+        console.warn('Unknown collection:', collection);
+    }
+  } catch(e) {
+    console.error('Failed to save data:', e);
+    throw e;
+  }
+}
+
+// --- Seed sample data if empty
+async function seedIfEmpty() {
+  try {
+    const [clients, accommodations, bookings] = await Promise.all([
+      load('atlantis_clients_v1'),
+      load('atlantis_accommodations_v1'),
+      load('atlantis_bookings_v1')
+    ]);
+
+    if (clients.length === 0 && accommodations.length === 0 && bookings.length === 0) {
+      console.log('Database is empty, seeding sample data...');
+      return true;
+    }
+    return false;
+  } catch(e) {
+    console.error('Failed to check/seed data:', e);
+    return false;
+  }
+}
+
+// --- Page content helpers
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function el(id){ return document.getElementById(id); }
+
+function showMessage(text, isError) {
+  const msg = el('message');
+  msg.textContent = text;
+  msg.style.display = 'block';
+  msg.className = isError ? 'error' : 'success';
+  setTimeout(() => msg.style.display = 'none', 3000);
+}
+
+function showModal() {
+  el('modal').style.display = 'flex';
+}
+
+function hideModal() {
+  el('modal').style.display = 'none';
+}
+
+// --- Router
+function navigate(){
+  const hash = location.hash.replace(/^#\//,'') || '';
+  const main = document.getElementById('app');
+  setActiveNav();
+  if(hash.startsWith('clients')) renderClients(main, hash);
+  else if(hash.startsWith('accommodations')) renderAccommodations(main, hash);
+  else if(hash.startsWith('bookings')) renderBookings(main, hash);
+  else renderHome(main);
+}
+
+function setActiveNav(){
+  document.querySelectorAll('.topbar nav a').forEach(a=>a.classList.remove('active'));
+  const path = location.hash || '#/';
+  const el = document.querySelector(`.topbar nav a[href="${path}"]`);
+  if(el) el.classList.add('active');
+}
+
+// --- Home
+function renderHome(container){
+  container.innerHTML = `
+    <section class="card">
+      <h2>Bem-vindo ao Atlantis</h2>
+      <p class="small">Use a navegação acima para acessar Clientes, Acomodações e Hospedagens.</p>
+    </section>
+    <section class="card">
+      <h3>Resumo</h3>
+      <div id="summary" class="grid"></div>
+    </section>
+  `;
+  renderSummary();
+}
+
+async function renderSummary(){
+  const el = document.getElementById('summary');
+  if (!el) return;
+  
+  try {
+    const [clients, acc, bookings] = await Promise.all([
+      load('atlantis_clients_v1'),
+      load('atlantis_accommodations_v1'),
+      load('atlantis_bookings_v1')
+    ]);
+
+    el.innerHTML = `
+      <div class="card"><strong>${clients ? clients.length : 0}</strong><div class="small">Clientes</div></div>
+      <div class="card"><strong>${acc ? acc.length : 0}</strong><div class="small">Acomodações</div></div>
+      <div class="card"><strong>${bookings ? bookings.length : 0}</strong><div class="small">Hospedagens</div></div>
+    `;
+  } catch (err) {
+    console.error('Failed to load summary:', err);
+    el.innerHTML = '<div class="error">Erro ao carregar resumo</div>';
+  }
+}
+
+// --- Clients
+function renderClients(container, hash){
+  container.innerHTML = `
+    <div class="grid">
+      <div class="card list">
+        <div class="toolbar"><h2>Clientes</h2><button class="btn" id="btn-new-client">Novo Cliente</button></div>
+        <div id="clients-list"></div>
+      </div>
+      <div class="card" id="clients-form-area">
+        <div class="empty">Selecione um cliente ou clique em "Novo Cliente"</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('btn-new-client').addEventListener('click', ()=> showClientForm());
+  renderClientsList();
+  if(hash.includes('edit')){
+    const id = hash.split('/')[1]; if(id) showClientForm(id);
+  }
+}
+
+function renderClientsList(){
+  const list = load('atlantis_clients_v1');
+  const container = document.getElementById('clients-list');
+  if(!list.length){ container.innerHTML = '<div class="empty">Nenhum cliente cadastrado</div>'; return; }
+  container.innerHTML = list.map(c=>{
+    const tipo = c.tipo || c.Tipo || 'titular';
+    const titularName = (tipo === 'dependente') ? (c.titularName || (c.Titular && (c.Titular.Nome || c.Titular.name)) || c.titular || '') : '';
+    // format phone
+    let phoneDisplay = '';
+    if(c.Telefones && c.Telefones.length){ const t = c.Telefones[0]; phoneDisplay = `(${t.Ddd||''}) ${t.Numero||''}`; }
+    else if(c.phone) phoneDisplay = c.phone;
+    else if(c.Telefones === undefined && c.telefones && c.telefones.length){ const t = c.telefones[0]; phoneDisplay = `(${t.Ddd||''}) ${t.Numero||''}`; }
+    return `
+    <div class="item">
+      <div>
+        <div><strong>${escapeHtml(c.name || c.nome)}</strong> ${tipo === 'dependente' ? '<span class="small">(dependente)</span>' : '<span class="small">(titular)</span>'}</div>
+        <div class="small">${escapeHtml(c.email || '')} • ${escapeHtml(c.Pais || c.pais || '')} ${escapeHtml(phoneDisplay)} ${titularName? '• Titular: '+escapeHtml(titularName):''}</div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" data-action="edit" data-id="${c.id}">Editar</button>
+        <button class="btn ghost" data-action="delete" data-id="${c.id}">Excluir</button>
+      </div>
+    </div>
+  `}).join('');
+  container.querySelectorAll('button[data-action]').forEach(btn=>{
+    btn.addEventListener('click', async (e)=>{
+      const id = btn.dataset.id;
+      if(btn.dataset.action === 'edit') showClientForm(id);
+      else if(btn.dataset.action === 'delete'){
+        if(confirm('Excluir cliente?')){
+          try {
+            await api.clients.delete(id);
+            await renderClientsList();
+            await renderSummary();
+          } catch(err) {
+            console.error('Failed to delete client:', err);
+            alert('Erro ao excluir cliente');
+          }
+        }
+      }
+    })
+  })
+}
+
+async function showClientForm(id){
+  const area = document.getElementById('clients-form-area');
+  let c;
+  if (id) {
+    try {
+      const clients = await load('atlantis_clients_v1');
+      c = clients.find(x => x.id === id);
+      if (!c) throw new Error('Client not found');
+    } catch(err) {
+      console.error('Failed to load client:', err);
+      area.innerHTML = '<div class="error">Erro ao carregar cliente</div>';
+      return;
+    }
+  } else {
+    c = {id:'',name:'',email:'',phone:'',tipo:'titular',dependentes:[],documentos:[],nomeSocial:'',dataNascimento:''};
+  }
+
+  // ensure arrays
+  c.dependentes = c.dependentes || c.Dependentes || [];
+  c.documentos = c.documentos || c.Documentos || [];
+
+  area.innerHTML = `
+    <h3>${c.id? 'Editar Cliente' : 'Novo Cliente'}</h3>
+    <form id="client-form">
+      <label>Nome<input type="text" name="name" value="${escapeHtml(c.name || c.nome || '')}" required /></label>
+      <label>Nome social<input type="text" name="nomeSocial" value="${escapeHtml(c.nomeSocial || c.nomeSocial || '')}" /></label>
+      <label>Data nascimento<input type="date" name="dataNascimento" value="${c.dataNascimento? c.dataNascimento.split('T')[0] : ''}" /></label>
+      <label>Email<input type="text" name="email" value="${escapeHtml(c.email || '')}" /></label>
+      <div class="row">
+        <label style="width:120px">DDD<input type="text" name="phoneDdd" value="${escapeHtml((c.Telefones && c.Telefones[0] && c.Telefones[0].Ddd) || (c.telefones && c.telefones[0] && c.telefones[0].Ddd) || '')}" /></label>
+        <label style="flex:1">Telefone<input type="text" name="phoneNumber" value="${escapeHtml((c.Telefones && c.Telefones[0] && c.Telefones[0].Numero) || (c.telefones && c.telefones[0] && c.telefones[0].Numero) || c.phone || '')}" /></label>
+      </div>
+      <fieldset style="margin-top:8px;padding:8px;border:1px solid #eef">
+        <legend>Endereço</legend>
+        <label>Rua<input type="text" name="end_rua" value="${escapeHtml((c.Endereco && c.Endereco.rua) || (c.endereco && c.endereco.rua) || '')}" /></label>
+        <div class="row">
+          <label style="width:120px">Número<input type="text" name="end_num" value="${escapeHtml((c.Endereco && c.Endereco.numero) || (c.endereco && c.endereco.numero) || '')}" /></label>
+          <label style="flex:1">Cidade<input type="text" name="end_cidade" value="${escapeHtml((c.Endereco && c.Endereco.cidade) || (c.endereco && c.endereco.cidade) || '')}" /></label>
+        </div>
+        <div class="row">
+          <label style="width:120px">Estado<input type="text" name="end_estado" value="${escapeHtml((c.Endereco && c.Endereco.estado) || (c.endereco && c.endereco.estado) || '')}" /></label>
+          <label style="flex:1">CEP<input type="text" name="end_cep" value="${escapeHtml((c.Endereco && c.Endereco.cep) || (c.endereco && c.endereco.cep) || '')}" /></label>
+        </div>
+        <div class="row">
+          <label>País<input type="text" name="end_pais" value="${escapeHtml((c.Endereco && c.Endereco.pais) || (c.endereco && c.endereco.pais) || '')}" /></label>
+        </div>
+      </fieldset>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn" type="submit">Salvar</button>
+        <button class="btn ghost" id="btn-cancel-client" type="button">Cancelar</button>
+      </div>
+    </form>
+  `;
+
+  document.getElementById('btn-cancel-client').addEventListener('click', ()=>{
+    area.innerHTML = '<div class="empty">Selecione um cliente ou clique em "Novo Cliente"</div>';
+  })
+
+  document.getElementById('client-form').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const form = e.target;
+    const telefones = [];
+    if(form.phoneDdd.value || form.phoneNumber.value) {
+      telefones.push({ 
+        Ddd: form.phoneDdd.value.trim(), 
+        Numero: form.phoneNumber.value.trim() 
+      });
+    }
+
+    const endereco = { 
+      rua: form.end_rua.value.trim(), 
+      numero: form.end_num.value.trim(), 
+      cidade: form.end_cidade.value.trim(), 
+      estado: form.end_estado.value.trim(), 
+      cep: form.end_cep.value.trim(),
+      pais: form.end_pais.value.trim()
+    };
+
+    try {
+      const clientData = {
+        name: form.name.value.trim(),
+        nomeSocial: form.nomeSocial.value.trim(),
+        dataNascimento: form.dataNascimento.value,
+        email: form.email.value.trim(),
+        Telefones: telefones,
+        Endereco: endereco,
+        tipo: c.tipo || c.Tipo || 'titular',
+        Documentos: c.documentos || []
+      };
+
+      if (c.id) {
+        await api.clients.update(c.id, clientData);
+      } else {
+        await api.clients.create(clientData);
+      }
+
+      await renderClientsList();
+      await renderSummary();
+      area.innerHTML = '<div class="small">Cliente salvo com sucesso.</div>';
+    } catch(err) {
+      console.error('Failed to save client:', err);
+      showMessage('Erro ao salvar cliente', true);
+    }
+  })
+}
+
+// --- Accommodations
+async function renderAccommodations(container, hash){
+  container.innerHTML = `
+    <div class="grid">
+      <div class="card list">
+        <div class="toolbar"><h2>Acomodações</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="btn-new-acc">Nova Acomodação</button>
+            <button class="btn ghost" id="btn-show-types">Mostrar tipos</button>
+          </div>
+        </div>
+        <div id="acc-list"></div>
+      </div>
+      <div class="card" id="acc-form-area">
+        <div class="empty">Selecione uma acomodação ou crie uma nova</div>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('btn-new-acc').addEventListener('click', ()=> showAccForm());
+  document.getElementById('btn-show-types').addEventListener('click', async ()=>{
+    try {
+      const types = await api.getAccommodationTypes();
+      alert('Tipos de Acomodação:\n' + types.map(t => `${t.key} — ${t.description}`).join('\n'));
+    } catch(e) {
+      console.error('Failed to load accommodation types:', e);
+      alert('Erro ao carregar tipos de acomodação');
+    }
+  });
+  
+  await renderAccList();
+  
+  if(hash.includes('edit')){
+    const id = hash.split('/')[1];
+    if(id) showAccForm(id);
+  }
+}
+
+async function renderAccList(){
+  const container = document.getElementById('acc-list');
+  try {
+    const list = await load('atlantis_accommodations_v1');
+    if(!list || !list.length){ 
+      container.innerHTML = '<div class="empty">Nenhuma acomodação</div>'; 
+      return; 
+    }
+    
+    container.innerHTML = list.map(a=>`
+      <div class="item">
+        <div>
+          <div><strong>${escapeHtml(a.name || a.type)}</strong></div>
+          <div class="small">
+            ${escapeHtml(a.type)} • 
+            camas solteiro ${a.CamaSolteiro || 0} • 
+            camas casal ${a.CamaCasal || 0} • 
+            climatização ${a.Climatizacao ? 'sim' : 'não'} • 
+            garagens ${a.Garagem || 0} • 
+            suítes ${a.Suite || 0} 
+            ${a.rate ? '• R$ ' + a.rate : ''}
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn ghost" data-action="edit" data-id="${a.id || a._id}">Editar</button>
+          <button class="btn ghost" data-action="delete" data-id="${a.id || a._id}">Excluir</button>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('button[data-action]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        if(btn.dataset.action === 'edit') {
+          showAccForm(id);
+        }
+        else if(btn.dataset.action === 'delete'){ 
+          if(confirm('Excluir acomodação?')){ 
+            try {
+              await api.accommodations.delete(id);
+              await renderAccList();
+              await renderSummary();
+            } catch(err) {
+              console.error('Failed to delete accommodation:', err);
+              alert('Erro ao excluir acomodação');
+            }
+          } 
+        }
+      })
+    });
+  } catch(err) {
+    console.error('Failed to render accommodations:', err);
+    container.innerHTML = '<div class="error">Erro ao carregar acomodações</div>';
+  }
+}
+
+async function showAccForm(id) {
+  const area = document.getElementById('acc-form-area');
+  try {
+    let a;
+    if (id) {
+      const items = await load('atlantis_accommodations_v1');
+      a = items.find(x => (x.id === id || x._id === id));
+      if (!a) throw new Error('Accommodation not found');
+    } else {
+      a = {
+        name: '',
+        type: '',
+        rate: 0
+      };
+    }
+
+    const types = await api.getAccommodationTypes();
+    
+    area.innerHTML = `
+      <h3>${a.id ? 'Editar Acomodação' : 'Nova Acomodação'}</h3>
+      <form id="acc-form">
+        <label>Nome<input type="text" name="name" value="${escapeHtml(a.name)}" required></label>
+        
+        <div class="row">
+          <label>Tipo
+            <select name="type" required>
+              <option value="">Selecione o tipo...</option>
+              ${types.map(t => `
+                <option value="${t.key}" ${t.key === a.type ? 'selected' : ''}>
+                  ${escapeHtml(t.key)} — ${escapeHtml(t.description || '')}
+                </option>
+              `).join('')}
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label>Tarifa (R$)<input type="number" name="rate" value="${a.rate || ''}" required></label>
+        </div>
+
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn" type="submit">Salvar</button>
+          <button class="btn ghost" id="btn-cancel-acc" type="button">Cancelar</button>
+        </div>
+      </form>
+    `;
+
+    // Show specs for selected type
+    const specsArea = document.createElement('div');
+    specsArea.className = 'specs';
+    const typeSelect = area.querySelector('select[name="type"]');
+    const renderSpecs = () => {
+      const selectedType = types.find(t => t.key === typeSelect.value);
+      if (selectedType && selectedType.specs) {
+        const s = selectedType.specs;
+        specsArea.innerHTML = `
+          <div class="spec-row"><strong>Camas solteiro:</strong> ${s.CamaSolteiro || 0}</div>
+          <div class="spec-row"><strong>Camas casal:</strong> ${s.CamaCasal || 0}</div>
+          <div class="spec-row"><strong>Climatização:</strong> ${s.Climatizacao ? 'sim' : 'não'}</div>
+          <div class="spec-row"><strong>Garagens:</strong> ${s.Garagem || 0}</div>
+          <div class="spec-row"><strong>Suítes:</strong> ${s.Suite || 0}</div>
+        `;
+      } else {
+        specsArea.innerHTML = '';
+      }
+    };
+    
+    typeSelect.parentNode.appendChild(specsArea);
+    typeSelect.addEventListener('change', renderSpecs);
+    renderSpecs();
+
+    document.getElementById('btn-cancel-acc').addEventListener('click', () => {
+      area.innerHTML = '<div class="empty">Selecione uma acomodação ou crie uma nova</div>';
+    });
+
+    document.getElementById('acc-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const form = e.target;
+        const accData = {
+          name: form.name.value.trim(),
+          type: form.type.value,
+          rate: parseFloat(form.rate.value) || 0
+        };
+
+        if (id) {
+          await api.accommodations.update(id, accData);
+        } else {
+          await api.accommodations.create(accData);
+        }
+
+        await renderAccList();
+        await renderSummary();
+        area.innerHTML = '<div class="small">Acomodação salva com sucesso</div>';
+      } catch(err) {
+        console.error('Failed to save accommodation:', err);
+        showMessage('Erro ao salvar acomodação', true);
+      }
+    });
+
+  } catch(err) {
+    console.error('Failed to show accommodation form:', err);
+    area.innerHTML = '<div class="error">Erro ao carregar formulário</div>';
+  }
+}
+
+// --- Bookings
+async function renderBookings(container){
+  container.innerHTML = `
+    <div class="grid">
+      <div class="card list">
+        <div class="toolbar"><h2>Hospedagens</h2><button class="btn" id="btn-new-booking">Nova Hospedagem</button></div>
+        <div id="bookings-list"></div>
+      </div>
+      <div class="card" id="booking-form-area">
+        <div class="empty">Selecione hospedagem ou crie nova</div>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('btn-new-booking').addEventListener('click', ()=> showBookingForm());
+  await renderBookingsList();
+}
+
+async function renderBookingsList(){
+  const container = document.getElementById('bookings-list');
+  try {
+    const [bookings, clients, accommodations] = await Promise.all([
+      load('atlantis_bookings_v1'),
+      load('atlantis_clients_v1'),
+      load('atlantis_accommodations_v1')
+    ]);
+    
+    if(!bookings || !bookings.length){ 
+      container.innerHTML = '<div class="empty">Nenhuma hospedagem registrada</div>'; 
+      return; 
+    }
+    
+    container.innerHTML = bookings.map(b=>{
+      const client = clients.find(c => c.id === b.clientId) || {name:'(cliente removido)'};
+      const acc = accommodations.find(x => x.id === b.accommodationId) || {name:'(acomodação removida)'};
+      return `
+        <div class="item">
+          <div>
+            <div><strong>${escapeHtml(client.name)}</strong> — ${escapeHtml(acc.name)}</div>
+            <div class="small">${b.from} → ${b.to} • ${escapeHtml(b.notes||'')}</div>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" data-action="edit" data-id="${b.id}">Editar</button>
+            <button class="btn ghost" data-action="delete" data-id="${b.id}">Cancelar</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('button[data-action]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        if(btn.dataset.action === 'edit') {
+          showBookingForm(id);
+        }
+        else if(btn.dataset.action === 'delete'){ 
+          if(confirm('Cancelar hospedagem?')){
+            try {
+              await api.bookings.delete(id);
+              await renderBookingsList();
+              await renderSummary();
+            } catch(err) {
+              console.error('Failed to delete booking:', err);
+              alert('Erro ao cancelar hospedagem');
+            }
+          }
+        }
+      })
+    });
+  } catch(err) {
+    console.error('Failed to render bookings:', err);
+    container.innerHTML = '<div class="error">Erro ao carregar hospedagens</div>';
+  }
+}
+
+async function showBookingForm(id){
+  const area = document.getElementById('booking-form-area');
+  try {
+    const [bookings, clients, accommodations] = await Promise.all([
+      load('atlantis_bookings_v1'),
+      load('atlantis_clients_v1'),
+      load('atlantis_accommodations_v1')
+    ]);
+
+    let b;
+    if (id) {
+      b = bookings.find(x => x.id === id);
+      if (!b) throw new Error('Booking not found');
+    } else {
+      b = {
+        clientId: '',
+        accommodationId: '',
+        from: '',
+        to: '',
+        notes: ''
+      };
+    }
+
+    // Only allow titulars to create bookings
+    const titulars = clients.filter(c => (c.tipo || c.Tipo || 'titular') === 'titular');
+
+    area.innerHTML = `
+      <h3>${b.id? 'Editar Hospedagem' : 'Nova Hospedagem'}</h3>
+      <form id="booking-form">
+        <label>Cliente
+          <select name="clientId" required>
+            <option value="">Selecione um cliente...</option>
+            ${titulars.map(c => `
+              <option value="${c.id}" ${c.id === b.clientId ? 'selected' : ''}>
+                ${escapeHtml(c.name)}
+              </option>
+            `).join('')}
+          </select>
+        </label>
+
+        <label>Acomodação
+          <select name="accommodationId" required>
+            <option value="">Selecione uma acomodação...</option>
+            ${accommodations.map(a => `
+              <option value="${a.id}" ${a.id === b.accommodationId ? 'selected' : ''}>
+                ${escapeHtml(a.name)} — ${escapeHtml(a.type)}
+              </option>
+            `).join('')}
+          </select>
+        </label>
+
+        <div class="row">
+          <label>Entrada<input type="date" name="from" value="${b.from}" required></label>
+          <label>Saída<input type="date" name="to" value="${b.to}" required></label>
+        </div>
+
+        <label>Observações<textarea name="notes">${escapeHtml(b.notes|| '')}</textarea></label>
+
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn" type="submit">Salvar</button>
+          <button class="btn ghost" id="btn-cancel-booking" type="button">Cancelar</button>
+        </div>
+      </form>
+    `;
+
+    document.getElementById('btn-cancel-booking').addEventListener('click', ()=>{
+      area.innerHTML = '<div class="empty">Selecione hospedagem ou crie nova</div>';
+    });
+
+    document.getElementById('booking-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      try {
+        const form = e.target;
+        const bookingData = {
+          clientId: form.clientId.value,
+          accommodationId: form.accommodationId.value,
+          from: form.from.value,
+          to: form.to.value,
+          notes: form.notes.value.trim()
+        };
+
+        if (id) {
+          await api.bookings.update(id, bookingData);
+        } else {
+          await api.bookings.create(bookingData);
+        }
+
+        await renderBookingsList();
+        await renderSummary();
+        area.innerHTML = '<div class="small">Hospedagem salva com sucesso</div>';
+      } catch(err) {
+        console.error('Failed to save booking:', err);
+        showMessage('Erro ao salvar hospedagem', true);
+      }
+    });
+
+  } catch(err) {
+    console.error('Failed to show booking form:', err);
+    area.innerHTML = '<div class="error">Erro ao carregar formulário</div>';
+  }
+}
+
+// --- Initialize app
+window.addEventListener('hashchange', navigate);
+window.addEventListener('load', () => {
+  navigate();
+  seedIfEmpty().catch(err => {
+    console.error('Failed to seed data:', err);
+  });
+});

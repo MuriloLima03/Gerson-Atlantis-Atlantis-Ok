@@ -1,0 +1,742 @@
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const path = require('path');
+
+// Server now uses MongoDB (Mongoose) models directly. Removed in-memory store usage.
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+
+const db = require(path.join(__dirname, 'db.js'));
+
+// Error handler middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    error: true, 
+    message: err.message || 'Internal server error'
+  });
+});
+
+// Success response helper
+function success(data) {
+  return { error: false, data };
+}
+
+// Simple in-memory IDs
+function genId(){ return 'id_' + Math.random().toString(36).slice(2,9); }
+
+// Definição dos tipos de acomodação e suas especificações
+const ACCOMMODATION_TYPES = {
+  SolteiroSimples: {
+    type: 'SolteiroSimples',
+    key: 'SolteiroSimples',
+    description: 'Acomodação simples para solteiro(a)',
+    CamaSolteiro: 1,
+    CamaCasal: 0,
+    Climatizacao: false,
+    Garagem: 1,
+    Suite: 0
+  },
+  CasalSimples: {
+    type: 'CasalSimples',
+    key: 'CasalSimples',
+    description: 'Acomodação simples para casal',
+    CamaSolteiro: 0,
+    CamaCasal: 1,
+    Climatizacao: false,
+    Garagem: 1,
+    Suite: 0
+  },
+  FamiliaSimples: {
+    type: 'FamiliaSimples',
+    key: 'FamiliaSimples',
+    description: 'Acomodação para família com até duas crianças',
+    CamaSolteiro: 2,
+    CamaCasal: 1,
+    Climatizacao: true,
+    Garagem: 1,
+    Suite: 1
+  },
+  FamiliaMais: {
+    type: 'FamiliaMais',
+    key: 'FamiliaMais',
+    description: 'Acomodação para família com até cinco crianças',
+    CamaSolteiro: 3,
+    CamaCasal: 1,
+    Climatizacao: true,
+    Garagem: 2,
+    Suite: 2
+  },
+  FamiliaSuper: {
+    type: 'FamiliaSuper',
+    key: 'FamiliaSuper',
+    description: 'Acomodação para até duas familias',
+    CamaSolteiro: 4,
+    CamaCasal: 2,
+    Climatizacao: true,
+    Garagem: 2,
+    Suite: 2
+  },
+  SolteiroMais: {
+    type: 'SolteiroMais',
+    key: 'SolteiroMais',
+    description: 'Acomodação com garagem para solteiro(a)',
+    CamaSolteiro: 1,
+    CamaCasal: 0,
+    Climatizacao: true,
+    Garagem: 2,
+    Suite: 1
+  }
+};
+      Garagem: 0,
+      Suite: 0
+    }
+  },
+  FamiliaSimples: {
+    key: 'FamiliaSimples',
+    description: 'Acomodação para família com até duas crianças',
+    specs: {
+      CamaSolteiro: 2,
+      CamaCasal: 1,
+      Climatizacao: true,
+      Garagem: 1,
+      Suite: 0
+    }
+  },
+  FamiliaMais: {
+    key: 'FamiliaMais',
+    description: 'Acomodação para família com até cinco crianças',
+    specs: {
+      CamaSolteiro: 4,
+      CamaCasal: 1,
+      Climatizacao: true,
+      Garagem: 1,
+      Suite: 1
+    }
+  },
+  SolteiroMais: {
+    key: 'SolteiroMais',
+    description: 'Acomodação com garagem para solteiro(a)',
+    specs: {
+      CamaSolteiro: 1,
+      CamaCasal: 0,
+      Climatizacao: true,
+      Garagem: 1,
+      Suite: 0
+    }
+  },
+  FamiliaSuper: {
+    key: 'FamiliaSuper',
+    description: 'Acomodação para até duas familias, casal e três crianças cada',
+    specs: {
+      CamaSolteiro: 6,
+      CamaCasal: 2,
+      Climatizacao: true,
+      Garagem: 2,
+      Suite: 2
+    }
+  }
+};
+
+// --- Health
+app.get('/api/health', async (req,res)=> {
+  const dbConnected = db.isConnected();
+  res.json({
+    status: dbConnected ? 'ok' : 'degraded',
+    time: new Date(),
+    database: dbConnected ? 'connected' : 'disconnected'
+  });
+});
+
+// --- Accommodation Types and Specs
+const ACCOMMODATION_SPECS = {
+  SolteiroSimples: {
+    CamaSolteiro: 1,
+    CamaCasal: 0,
+    Climatizacao: true,
+    Garagem: 1,
+    Suite: 0,
+    key: 'SolteiroSimples',
+    type: 'SolteiroSimples',
+    description: 'Acomodação simples para solteiro(a)'
+  },
+  SolteiroMais: {
+    CamaSolteiro: 1,
+    CamaCasal: 0,
+    Climatizacao: true,
+    Garagem: 2,
+    Suite: 1,
+    key: 'SolteiroMais',
+    type: 'SolteiroMais',
+    description: 'Acomodação com garagem para solteiro(a)'
+  },
+  CasalSimples: {
+    CamaSolteiro: 0,
+    CamaCasal: 1,
+    Climatizacao: true,
+    Garagem: 1,
+    Suite: 0,
+    key: 'CasalSimples',
+    type: 'CasalSimples',
+    description: 'Acomodação simples para casal'
+  },
+  FamiliaSimples: {
+    CamaSolteiro: 2,
+    CamaCasal: 1,
+    Climatizacao: true,
+    Garagem: 1,
+    Suite: 1,
+    key: 'FamiliaSimples',
+    type: 'FamiliaSimples',
+    description: 'Acomodação para família com até duas crianças'
+  },
+  FamiliaMais: {
+    CamaSolteiro: 3,
+    CamaCasal: 1,
+    Climatizacao: true,
+    Garagem: 2,
+    Suite: 2,
+    type: 'FamiliaMais',
+    description: 'Acomodação para família com até cinco crianças'
+  },
+  FamiliaSuper: {
+    CamaSolteiro: 4,
+    CamaCasal: 2,
+    Climatizacao: true,
+    Garagem: 3,
+    Suite: 2,
+    type: 'FamiliaSuper',
+    description: 'Acomodação para até duas familias, casal e três crianças cada'
+  }
+};
+
+app.get('/api/v1/accommodation-types', (req, res) => {
+  try {
+    const types = Object.entries(ACCOMMODATION_SPECS).map(([key, spec]) => ({
+      key,
+      description: spec.description
+    }));
+    res.json({ data: types });
+  } catch(err) {
+    console.error('Error fetching accommodation types:', err);
+    res.status(500).json({ 
+      error: true, 
+      message: 'Failed to fetch accommodation types'
+    });
+  }
+});
+
+app.get('/api/v1/accommodation-types-specs', (req, res) => {
+  try {
+    const specs = Object.entries(ACCOMMODATION_SPECS).map(([key, spec]) => ({
+      key,
+      ...spec
+    }));
+    res.json({ data: specs });
+  } catch(err) {
+    console.error('Error fetching accommodation specs:', err);
+    res.status(500).json({
+      error: true,
+      message: 'Failed to fetch accommodation specifications'
+    });
+  }
+});
+
+// --- Accommodations with MongoDB integration
+app.get('/api/v1/accommodations', async (req, res) => {
+  try {
+    const items = await db.models.Acomodacao.find().lean();
+    const accommodations = items.map(item => {
+      const typeSpec = ACCOMMODATION_SPECS[item.type];
+      return {
+        id: String(item._id),
+        name: item.name || '',
+        type: item.type,
+        CamaSolteiro: item.CamaSolteiro || typeSpec?.CamaSolteiro || 0,
+        CamaCasal: item.CamaCasal || typeSpec?.CamaCasal || 0,
+        Climatizacao: item.Climatizacao || typeSpec?.Climatizacao || false,
+        Garagem: item.Garagem || typeSpec?.Garagem || 0,
+        Suite: item.Suite || typeSpec?.Suite || 0,
+        rate: item.rate || 0
+      };
+    });
+    res.json({ data: accommodations });
+  } catch (err) {
+    console.error('Erro ao buscar acomodações:', err);
+    res.status(500).json({ error: 'Erro ao buscar acomodações' });
+  }
+});
+
+app.post('/api/v1/accommodations', async (req, res, next) => {
+  try {
+    const { type, numero } = req.body;
+    if (!type || !typeSpecs[type]) {
+      return res.status(400).json({ error: 'Tipo de acomodação inválido' });
+    }
+    
+    const accommodation = new db.models.Acomodacao({
+      type,
+      numero: numero || '',
+      disponivel: true,
+      ...typeSpecs[type]
+    });
+    
+    await accommodation.save();
+    res.status(201).json({ 
+      data: {
+        id: String(accommodation._id),
+        type: accommodation.type,
+        ...typeSpecs[type],
+        disponivel: true,
+        numero: accommodation.numero
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/v1/accommodations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { type, name, rate } = req.body;
+    
+    const accommodation = await db.models.Acomodacao.findById(id);
+    if (!accommodation) {
+      return res.status(404).json({ error: 'Acomodação não encontrada' });
+    }
+    
+    if (name !== undefined) {
+      accommodation.name = name;
+    }
+    
+    if (type && typeSpecs[type]) {
+      accommodation.type = type;
+      accommodation.CamaSolteiro = typeSpecs[type].CamaSolteiro;
+      accommodation.CamaCasal = typeSpecs[type].CamaCasal;
+      accommodation.Climatizacao = typeSpecs[type].Climatizacao;
+      accommodation.Garagem = typeSpecs[type].Garagem;
+      accommodation.Suite = typeSpecs[type].Suite;
+    }
+    
+    if (rate !== undefined) {
+      accommodation.rate = rate;
+    }
+    
+    await accommodation.save();
+    res.json({ 
+      data: {
+        id: String(accommodation._id),
+        name: accommodation.name,
+        type: accommodation.type,
+        CamaSolteiro: accommodation.CamaSolteiro,
+        CamaCasal: accommodation.CamaCasal,
+        Climatizacao: accommodation.Climatizacao,
+        Garagem: accommodation.Garagem,
+        Suite: accommodation.Suite,
+        rate: accommodation.rate
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao atualizar acomodação:', err);
+    res.status(500).json({ error: 'Erro ao atualizar acomodação' });
+  }
+});
+
+app.delete('/api/v1/accommodations/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const result = await db.models.Acomodacao.findByIdAndDelete(id);
+    if (!result) {
+      return res.status(404).json({ error: 'Acomodação não encontrada' });
+    }
+    res.json({ message: 'Acomodação removida com sucesso' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Clients
+app.get('/api/v1/clients', async (req,res)=>{
+  try{
+    const docs = await db.models.Cliente.find().populate('Dependentes').lean();
+    const clients = (docs || []).map(c => ({ id: c._id ? String(c._id) : c.id, nome: c.Nome || c.nome, pais: c.Pais, nomeSocial: c.NomeSocial || c.nomeSocial, dataNascimento: c.DataNascimento, dataCadastro: c.DataCadastro, telefones: c.Telefones || [], endereco: c.Endereco || null, documentos: c.Documentos || [], dependentes: c.Dependentes || [], tipo: c.Tipo || 'titular', titularId: c.Titular ? (c.Titular._id ? String(c.Titular._id) : c.Titular) : undefined }));
+    res.json({ data: clients });
+  }catch(err){ console.error('Failed to load clients:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao carregar clientes' }); }
+});
+
+app.get('/api/v1/clients/:id', async (req,res)=>{
+  const id = req.params.id;
+  try{
+    let c = await db.models.Cliente.findOne({ $or: [{ _id: id }, { id }] }).populate('Dependentes').lean();
+    if(!c) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const out = { id: c._id ? String(c._id) : c.id, nome: c.Nome || c.nome, pais: c.Pais || undefined, nomeSocial: c.NomeSocial || c.nomeSocial, dataNascimento: c.DataNascimento, dataCadastro: c.DataCadastro, telefones: c.Telefones || [], endereco: c.Endereco || null, documentos: c.Documentos || [], dependentes: c.Dependentes || [], tipo: c.Tipo || 'titular', titularId: c.Titular ? (c.Titular._id ? String(c.Titular._id) : c.Titular) : undefined };
+    res.json({ data: out });
+  }catch(err){ console.error('Failed to load client:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao carregar cliente' }); }
+});
+
+app.post('/api/v1/clients', async (req,res)=>{
+  const { name, email, phoneDdd, phoneNumber, endereco, nascimento, tipo, titularId, country, pais } = req.body;
+  // Build payload for DB
+  const payload = {
+    Nome: name || 'Sem nome',
+    nome: name || 'Sem nome',
+    NomeSocial: '',
+    DataNascimento: nascimento ? new Date(nascimento) : new Date(),
+    DataCadastro: new Date(),
+    email: email || undefined,
+    Pais: country || pais || undefined,
+    Telefones: [],
+    Endereco: endereco || undefined,
+    Documentos: [],
+    Tipo: tipo === 'dependente' ? 'dependente' : 'titular'
+  };
+  if(phoneDdd || phoneNumber){ payload.Telefones.push({ Ddd: phoneDdd || '', Numero: phoneNumber || '' }); }
+
+  try{
+    // handle dependent relation
+    if(payload.Tipo === 'dependente' && titularId){
+      // try to find titular by _id or id
+      const titularDoc = await db.models.Cliente.findOne({ $or: [{ _id: titularId }, { id: titularId }] }).exec();
+      if(titularDoc){ payload.Titular = titularDoc._id; }
+    }
+
+    const created = await db.models.Cliente.create(payload);
+    // if dependent, push into titular.Dependentes array
+    if(payload.Titular){
+      try{ await db.models.Cliente.updateOne({ _id: payload.Titular }, { $addToSet: { Dependentes: created._id } }).exec(); }catch(e){ /* ignore */ }
+    }
+
+    res.status(201).json({ message: 'dado enviado', data: { id: String(created._id), ...created.toObject() } });
+  }catch(err){
+    console.error('Failed to create cliente:', err && err.message ? err.message : err);
+    res.status(500).json({ error: 'Erro ao criar cliente' });
+  }
+});
+
+app.put('/api/v1/clients/:id', async (req,res)=>{
+  const id = req.params.id; const { name, email, phoneDdd, phoneNumber, endereco, tipo, country, pais } = req.body;
+  const update = {};
+  if(name) update.Nome = name;
+  if(email) update.email = email;
+  if(country || pais) update.Pais = country || pais;
+  if(endereco) update.Endereco = endereco;
+  if(tipo) update.Tipo = tipo;
+  if(phoneDdd || phoneNumber) update.Telefones = [{ Ddd: phoneDdd||'', Numero: phoneNumber||'' }];
+
+  try{
+    const resUpdate = await db.models.Cliente.updateOne({ $or: [{ _id: id }, { id }] }, { $set: update }).exec();
+    if(resUpdate.matchedCount === 0 && resUpdate.nModified === 0){
+      // try to find by id and return 404 if not found
+      const found = await db.models.Cliente.findOne({ $or: [{ _id: id }, { id }] }).lean();
+      if(!found) return res.status(404).json({ error: 'Cliente não encontrado' });
+    }
+    res.json({ message: 'dado enviado' });
+  }catch(err){ console.error('Failed to update cliente:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao atualizar cliente' }); }
+});
+
+app.delete('/api/v1/clients/:id', async (req,res)=>{
+  const id = req.params.id;
+  try{
+    // try find client
+    const client = await db.models.Cliente.findOne({ $or: [{ _id: id }, { id }] }).exec();
+    if(!client) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const tipo = client.Tipo || client.tipo || 'titular';
+    if(tipo === 'dependente'){
+      // remove dependent and remove reference from titular
+      await db.models.Cliente.deleteOne({ _id: client._id }).exec();
+      if(client.Titular){
+        try{ await db.models.Cliente.updateOne({ _id: client.Titular }, { $pull: { Dependentes: client._id } }).exec(); }catch(e){}
+      }
+      // remove bookings referencing this client
+      try{ await db.models.Hospedagem.deleteMany({ $or: [{ clientId: id }, { clientId: client._id }] }).exec(); }catch(e){}
+      return res.status(204).end();
+    }
+    // titular: remove dependents, their bookings, then titular and its bookings
+    try{
+      const dependents = await db.models.Cliente.find({ Titular: client._id }).exec();
+      const depIds = dependents.map(d=> d._id);
+      if(depIds.length){
+        await db.models.Cliente.deleteMany({ _id: { $in: depIds } }).exec();
+        await db.models.Hospedagem.deleteMany({ clientId: { $in: depIds.map(String) } }).exec();
+      }
+      // delete titular bookings and titular
+      await db.models.Hospedagem.deleteMany({ $or: [{ clientId: id }, { clientId: client._id }] }).exec();
+      await db.models.Cliente.deleteOne({ _id: client._id }).exec();
+      return res.status(204).end();
+    }catch(e){ console.error('Failed to delete client and dependents:', e && e.message ? e.message : e); return res.status(500).json({ error: 'Erro ao deletar cliente' }); }
+  }catch(err){ console.error('Failed to delete client:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao deletar cliente' }); }
+});
+
+// Add documents and dependents routes
+app.post('/api/v1/clients/:id/documents', async (req,res)=>{
+  const id = req.params.id; const { tipo, numero, dataExpedicao } = req.body;
+  try{
+    const target = await db.models.Cliente.findOne({ $or: [{ _id: id }, { id }] }).exec();
+    if(!target) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const doc = { tipo, numero, dataExpedicao };
+    await db.models.Cliente.updateOne({ _id: target._id }, { $push: { Documentos: doc } }).exec();
+    res.status(201).json({ message: 'dado enviado', data: doc });
+  }catch(err){ console.error('Failed to persist document to mongo:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao adicionar documento' }); }
+});
+
+app.get('/api/v1/clients/:id/dependents', async (req,res)=>{
+  const id = req.params.id;
+  try{
+    const docs = await db.models.Cliente.find({ Titular: { $in: [id] } }).lean();
+    // also try ObjectId match
+    if(!docs || docs.length === 0){
+      const docs2 = await db.models.Cliente.find({ Titular: id }).lean();
+      return res.json({ data: (docs2 || []).map(d=> ({ id: d._id ? String(d._id) : d.id, ...d })) });
+    }
+    return res.json({ data: (docs || []).map(d=> ({ id: d._id ? String(d._id) : d.id, ...d })) });
+  }catch(err){ console.error('Failed to load dependents from mongo:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao carregar dependentes' }); }
+});
+
+app.post('/api/v1/clients/:id/dependents', async (req,res)=>{
+  const titularId = req.params.id; const { name, nomeSocial, dataNascimento, documents, endereco, phoneDdd, phoneNumber } = req.body;
+  try{
+    const titularDoc = await db.models.Cliente.findOne({ $or: [{ _id: titularId }, { id: titularId }] }).exec();
+    if(!titularDoc) return res.status(404).json({ error: 'Titular não encontrado' });
+    const payload = {
+      Nome: name || 'Sem nome', nome: name || 'Sem nome', NomeSocial: nomeSocial || '', DataNascimento: dataNascimento ? new Date(dataNascimento) : new Date(), Documentos: documents || [], Endereco: endereco || null, Telefones: [], Tipo: 'dependente', Titular: titularDoc._id
+    };
+    if(phoneDdd || phoneNumber) payload.Telefones.push({ Ddd: phoneDdd || '', Numero: phoneNumber || '' });
+    const created = await db.models.Cliente.create(payload);
+    // add to titular.Dependentes
+    try{ await db.models.Cliente.updateOne({ _id: titularDoc._id }, { $addToSet: { Dependentes: created._id } }).exec(); }catch(e){}
+    res.status(201).json({ message: 'dado enviado', data: { id: String(created._id), ...created.toObject() } });
+  }catch(err){ console.error('Failed to create dependent:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao criar dependente' }); }
+});
+
+// --- Accommodations (simple plain objects stored in armazem.acomodacoes)
+app.get('/api/v1/accommodations', async (req,res)=>{
+  try{
+    const docs = await db.models.Acomodacao.find().lean();
+    const acc = (docs || []).map(a=> ({ id: a._id ? String(a._id) : (a.id||genId()), name: a.name || a.Nome || a.NomeAcomadacao || '—', type: a.type || a.Tipo || '', CamaSolteiro: a.CamaSolteiro || a.camaSolteiro || 0, CamaCasal: a.CamaCasal || a.camaCasal || 0, Climatizacao: (typeof a.Climatizacao !== 'undefined') ? a.Climatizacao : !!a.climatizacao, Garagem: a.Garagem || a.garagem || 0, Suite: a.Suite || a.suite || 0, rate: a.rate || a.Valor || 0 }));
+    res.json({ data: acc });
+  }catch(err){ console.error('Failed to load accommodations:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao carregar acomodações' }); }
+});
+
+// accommodation types (from enumerations / directors)
+const nomeAcomodacaoEnum = require(path.join(__dirname, '..', 'js', 'enumeracoes', 'NomeAcomadacao.js'));
+// Build specs from directors (predefined characteristics)
+const diretorIndex = require(path.join(__dirname, '..', 'js', 'diretores', 'index.js'));
+app.get('/api/v1/accommodation-types', (req,res)=>{
+  // return enumeration entries as { key, description }
+  const map = nomeAcomodacaoEnum.NomeAcomadacao || {};
+  const entries = Object.keys(map).map(k=> ({ key: k, description: map[k] }));
+  res.json({ data: entries });
+});
+
+// Return detailed specs for each type (CamaSolteiro, CamaCasal, Climatizacao, Garagem, Suite)
+app.get('/api/v1/accommodation-types-specs', (req,res)=>{
+  const specs = [];
+  // iterate exported directors
+  Object.keys(diretorIndex).forEach(exportKey => {
+    try{
+      const DirClass = diretorIndex[exportKey];
+      if(typeof DirClass === 'function'){
+        const dir = new DirClass();
+        if(typeof dir.construir === 'function'){
+          const acom = dir.construir();
+          // acomodacao has getters: NomeAcomadacao, CamaSolteiro, CamaCasal, Suite, Climatizacao, Garagem
+          const key = String(acom.NomeAcomadacao || acom.NomeAcomodacao || '');
+          specs.push({ key, CamaSolteiro: acom.CamaSolteiro || acom.camaSolteiro || 0, CamaCasal: acom.CamaCasal || acom.camaCasal || 0, Climatizacao: !!(acom.Climatizacao || acom.climatizacao), Garagem: acom.Garagem || acom.garagem || 0, Suite: acom.Suite || acom.suite || 0 });
+        }
+      }
+    }catch(e){ /* ignore individual failures */ }
+  });
+  res.json({ data: specs });
+});
+
+app.post('/api/v1/accommodations', async (req,res)=>{
+  try {
+    const { type, numero } = req.body;
+    if (!type || !typeSpecs[type]) {
+      return res.status(400).json({ error: 'Tipo de acomodação inválido' });
+    }
+    
+    const accommodation = new db.models.Acomodacao({
+      type,
+      numero: numero || '',
+      disponivel: true,
+      ...typeSpecs[type]
+    });
+    
+    await accommodation.save();
+    res.status(201).json({ 
+      data: {
+        id: String(accommodation._id),
+        type: accommodation.type,
+        ...typeSpecs[type],
+        disponivel: true,
+        numero: accommodation.numero
+      }
+    });
+  } catch (err) {
+    console.error('Failed to create accommodation:', err);
+    res.status(500).json({ error: 'Erro ao criar acomodação' });
+  }
+});
+
+app.put('/api/v1/accommodations/:id', async (req,res)=>{
+  try {
+    const { id } = req.params;
+    const { type, numero, disponivel } = req.body;
+    
+    const accommodation = await db.models.Acomodacao.findById(id);
+    if (!accommodation) {
+      return res.status(404).json({ error: 'Acomodação não encontrada' });
+    }
+    
+    if (type && typeSpecs[type]) {
+      accommodation.type = type;
+      Object.assign(accommodation, typeSpecs[type]);
+    }
+    
+    if (numero !== undefined) {
+      accommodation.numero = numero;
+    }
+    
+    if (disponivel !== undefined) {
+      accommodation.disponivel = disponivel;
+    }
+    
+    await accommodation.save();
+    res.json({ 
+      data: {
+        id: String(accommodation._id),
+        type: accommodation.type,
+        ...typeSpecs[accommodation.type],
+        disponivel: accommodation.disponivel,
+        numero: accommodation.numero
+      }
+    });
+  } catch (err) {
+    console.error('Failed to update accommodation:', err);
+    res.status(500).json({ error: 'Erro ao atualizar acomodação' });
+  }
+});
+
+app.delete('/api/v1/accommodations/:id', async (req,res)=>{
+  const id = req.params.id;
+  try{
+    await db.models.Hospedagem.deleteMany({ $or: [{ accommodationId: id }, { accommodationId: { $in: [id] } }] }).exec();
+    await db.models.Acomodacao.deleteOne({ $or: [{ _id: id }, { id }] }).exec();
+    res.status(204).end();
+  }catch(err){ console.error('Failed to delete accommodation:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao deletar acomodação' }); }
+});
+
+// --- Bookings
+app.get('/api/v1/bookings', async (req,res)=>{
+  try{
+    const docs = await db.models.Hospedagem.find().lean();
+    const bookings = (docs || []).map(b=> ({ id: b._id ? String(b._id) : b.id, clientId: b.clientId, accommodationId: b.accommodationId, from: b.from, to: b.to, notes: b.notes }));
+    res.json({ data: bookings });
+  }catch(err){ console.error('Failed to load bookings:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao carregar hospedagens' }); }
+});
+
+app.post('/api/v1/bookings', async (req,res)=>{
+  const { clientId, accommodationId, from, to, notes } = req.body;
+  try{
+    const client = await db.models.Cliente.findOne({ $or: [{ _id: clientId }, { id: clientId }] }).lean();
+    if(!client) return res.status(400).json({ error: 'Cliente inválido' });
+    const tipo = client.Tipo || client.tipo || 'titular';
+    if(tipo === 'dependente') return res.status(400).json({ error: 'Dependentes não podem criar hospedagens' });
+    const created = await db.models.Hospedagem.create({ clientId, accommodationId, from, to, notes });
+    res.status(201).json({ message: 'dado enviado', data: { id: String(created._id), ...created.toObject() } });
+  }catch(err){ console.error('Failed to create booking:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao criar hospedagem' }); }
+});
+
+app.put('/api/v1/bookings/:id', async (req,res)=>{
+  const id = req.params.id; const { from, to, notes } = req.body;
+  try{
+    const result = await db.models.Hospedagem.updateOne({ $or: [{ _id: id }, { id }] }, { $set: { from, to, notes } }).exec();
+    if(result.matchedCount === 0) return res.status(404).json({ error: 'Hospedagem não encontrada' });
+    res.json({ message: 'dado enviado' });
+  }catch(err){ console.error('Failed to update booking:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao atualizar hospedagem' }); }
+});
+
+app.delete('/api/v1/bookings/:id', async (req,res)=>{
+  const id = req.params.id;
+  try{
+    await db.models.Hospedagem.deleteOne({ $or: [{ _id: id }, { id }] }).exec();
+    res.status(204).end();
+  }catch(err){ console.error('Failed to delete booking:', err && err.message ? err.message : err); res.status(500).json({ error: 'Erro ao deletar hospedagem' }); }
+});
+
+// --- Bulk replace endpoints (convenience for SPA adapter)
+app.put('/api/v1/_bulk/clients', (req,res)=>{
+  (async ()=>{
+    const arr = Array.isArray(req.body) ? req.body : [];
+    try{
+      await db.models.Cliente.deleteMany({}).exec();
+      if(arr.length) await db.models.Cliente.insertMany(arr);
+      return res.json({ message: 'dado enviado', data: arr });
+    }catch(err){ console.error('Failed bulk clients:', err && err.message ? err.message : err); return res.status(500).json({ error: 'Erro no bulk de clients' }); }
+  })();
+});
+
+app.put('/api/v1/_bulk/accommodations', (req,res)=>{
+  (async ()=>{
+    const arr = Array.isArray(req.body) ? req.body : [];
+    try{
+      await db.models.Acomodacao.deleteMany({}).exec();
+      if(arr.length) await db.models.Acomodacao.insertMany(arr);
+      return res.json({ message: 'dado enviado', data: arr });
+    }catch(err){ console.error('Failed bulk accommodations:', err && err.message ? err.message : err); return res.status(500).json({ error: 'Erro no bulk de acomodações' }); }
+  })();
+});
+
+app.put('/api/v1/_bulk/bookings', (req,res)=>{
+  (async ()=>{
+    const arr = Array.isArray(req.body) ? req.body : [];
+    try{
+      await db.models.Hospedagem.deleteMany({}).exec();
+      if(arr.length) await db.models.Hospedagem.insertMany(arr);
+      return res.json({ message: 'dado enviado', data: arr });
+    }catch(err){ console.error('Failed bulk bookings:', err && err.message ? err.message : err); return res.status(500).json({ error: 'Erro no bulk de hospedagens' }); }
+  })();
+});
+
+// Serve the UI statically for convenience
+app.use('/', express.static(path.join(__dirname, '..', 'ui')));
+
+const port = process.env.PORT || 3000;
+
+// Connect to Mongo (if configured) and then start server
+(async function start(){
+  try{
+    await db.connect();
+    if(!db.isConnected()){
+      console.error('MongoDB not connected — exiting. Set MONGODB_URI environment variable correctly.');
+      process.exit(1);
+    }
+    console.log('MongoDB connection established — starting server.');
+    // Seed default data if collections are empty
+    try{
+      // check counts
+      const clienteCount = await db.models.Cliente.countDocuments().exec().catch(()=>0);
+      const accCount = await db.models.Acomodacao.countDocuments().exec().catch(()=>0);
+      const hospedCount = await db.models.Hospedagem.countDocuments().exec().catch(()=>0);
+      if(clienteCount === 0 || accCount === 0){
+        console.log('Seeding default data into MongoDB...');
+        // create default client
+        const defaultClient = await db.models.Cliente.create({ Nome: 'Admin Demo', nome: 'Admin Demo', NomeSocial: 'Admin', DataNascimento: new Date('1990-01-01'), email: 'admin@example.com', Pais: 'Brasil', Telefones: [{ Ddd: '11', Numero: '999990000' }], Endereco: { rua: 'Rua Demo', numero: '1', cidade: 'Cidade', pais: 'Brasil' }, Documentos: [], Tipo: 'titular' });
+        // create default accommodation
+        const defaultAcc = await db.models.Acomodacao.create({ name: 'Quarto Demo', type: 'SolteiroSimples', CamaSolteiro: 1, CamaCasal: 0, Climatizacao: false, Garagem: 0, Suite: 0, rate: 120 });
+        // create a default booking if hospedagens empty
+        if(hospedCount === 0){
+          const from = new Date(); const to = new Date(from); to.setDate(from.getDate() + 2);
+          await db.models.Hospedagem.create({ clientId: defaultClient._id, accommodationId: defaultAcc._id, from: from.toISOString().split('T')[0], to: to.toISOString().split('T')[0], notes: 'Reserva inicial' });
+        }
+        console.log('Default data seeded.');
+      }
+    }catch(seedErr){ console.error('Failed to seed default data:', seedErr && seedErr.message ? seedErr.message : seedErr); }
+  }catch(e){ console.error('Error during DB connect:', e && e.message ? e.message : e); }
+  app.listen(port, ()=> console.log(`API server running at http://localhost:${port}/ - UI served at /index.html`));
+})();
