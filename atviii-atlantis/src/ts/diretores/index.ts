@@ -1,0 +1,6 @@
+export { default as DiretorSolteiroSimples } from './diretorSolteiroSimples'
+export { default as DiretorSolteiroMais } from './diretorSolteiroMais'
+export { default as DiretorCasalSimples } from './diretorCasalSimples'
+export { default as DiretorFamiliaSimples } from './diretorFamiliaSimples'
+export { default as DiretorFamiliaMais } from './diretorFamiliaMais'
+export { default as DiretorFamiliaSuper } from './diretorFamiliaSuper'
