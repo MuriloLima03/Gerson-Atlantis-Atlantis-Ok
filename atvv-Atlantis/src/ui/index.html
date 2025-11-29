@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Protótipo Atlantis - SPA</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Atlantis</h1>
+    <nav>
+      <a href="#/" id="nav-home">Início</a>
+      <a href="#/clients" id="nav-clients">Clientes</a>
+      <a href="#/accommodations" id="nav-accommodations">Acomodações</a>
+      <a href="#/bookings" id="nav-bookings">Hospedagens</a>
+    </nav>
+  </header>
+
+  <main id="app" class="container">
+    <!-- SPA content injected here -->
+  </main>
+
+  <footer class="footer"></footer>
+
+  <script src="api.js"></script>
+  <script>
+    // Auto-detect API mode: if ?mode=http in URL, use HTTP mode; otherwise try local
+    // window.API_MODE can be overridden via URL param: ?mode=http or ?mode=local
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get('mode') || 'http'; // default to http (try to use server)
+    window.API_MODE = mode;
+    window.API_BASE_URL = urlParams.get('base') || '';
+    console.log(`[Atlantis] Starting in ${mode} mode, API base: ${window.API_BASE_URL || '(same origin)'}`);
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
